@@ -1,0 +1,80 @@
+[package]
+name = "any-llm"
+version = "0.1.0"
+edition = "2021"
+description = "A unified Rust interface for LLM providers using official SDKs"
+license = "MIT"
+repository = "https://github.com/r/any-llm-rust"
+keywords = ["llm", "ai", "openai", "anthropic", "ollama"]
+categories = ["api-bindings", "asynchronous"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Async trait support
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+# HTTP client (for providers without official SDK)
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Async streaming
+futures = "0.3"
+async-stream = "0.3"
+tokio-stream = "0.1"
+
+# Lazy statics for registry
+once_cell = "1"
+
+# URL parsing
+url = "2"
+
+# =============================================================================
+# Official LLM Provider SDKs
+# =============================================================================
+
+# OpenAI SDK - https://github.com/64bit/async-openai
+async-openai = { version = "0.32", features = ["chat-completion", "model"] }
+
+# Ollama SDK - https://github.com/pepperoni21/ollama-rs
+ollama-rs = { version = "0.3", features = ["stream"] }
+
+# Anthropic SDK - https://github.com/dimichgh/anthropic-sdk-rust
+anthropic-sdk-rust = "0.1"
+
+# Schema library (used by ollama-rs)
+schemars = "1"
+
+[dev-dependencies]
+# Testing
+tokio-test = "0.4"
+
+# Mocking
+mockall = "0.13"
+
+# HTTP mocking for integration tests
+wiremock = "0.6"
+
+# Property-based testing
+proptest = "1"
+
+# Test utilities
+pretty_assertions = "1"
+
+[features]
+default = ["openai", "anthropic", "ollama", "llamafile"]
+openai = []
+anthropic = []
+ollama = []
+llamafile = []
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
