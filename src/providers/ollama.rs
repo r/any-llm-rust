@@ -387,7 +387,6 @@ impl Provider for OllamaProvider {
             .await
             .map_err(Self::handle_error)?;
 
-        let model = request.model.clone();
         let id = format!("ollama-{}", std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())

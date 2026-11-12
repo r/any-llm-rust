@@ -60,7 +60,7 @@ impl AnthropicProvider {
         } else {
             // Try to create from environment
             Anthropic::from_env()
-                .map_err(|e| AnyLLMError::missing_api_key(Self::PROVIDER_NAME, Self::ENV_API_KEY_NAME))?
+                .map_err(|_| AnyLLMError::missing_api_key(Self::PROVIDER_NAME, Self::ENV_API_KEY_NAME))?
         };
 
         Ok(Self {
