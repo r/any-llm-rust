@@ -84,7 +84,7 @@ impl OllamaProvider {
     }
 
     /// Convert messages to Ollama SDK format.
-    fn convert_messages(messages: &[Message]) -> Vec<ChatMessage> {
+    fn convert_messages(messages: &[Message]) -> Result<Vec<ChatMessage>, AnyLLMError> {
         messages
             .iter()
             .map(|msg| {
@@ -140,7 +140,25 @@ impl OllamaProvider {
                     chat_msg = chat_msg.with_images(imgs);
                 }
 
-                chat_msg
+                if msg.role == MessageRole::Assistant {
+                    if let Some(tool_calls) = &msg.tool_calls {
+                        chat_msg.tool_calls = tool_calls.iter().map(|call| {
+                            let arguments: serde_json::Value = serde_json::from_str(&call.function.arguments)
+                                .map_err(|_| AnyLLMError::invalid_request("Ollama tool call arguments must be a JSON object"))?;
+                            if !arguments.is_object() {
+                                return Err(AnyLLMError::invalid_request("Ollama tool call arguments must be a JSON object"));
+                            }
+                            Ok(ollama_rs::generation::tools::ToolCall {
+                                function: ollama_rs::generation::tools::ToolCallFunction {
+                                    name: call.function.name.clone(),
+                                    arguments,
+                                },
+                            })
+                        }).collect::<Result<Vec<_>, AnyLLMError>>()?;
+                    }
+                }
+
+                Ok(chat_msg)
             })
             .collect()
     }
@@ -243,7 +261,7 @@ impl Provider for OllamaProvider {
     }
 
     async fn completion(&self, request: CompletionRequest) -> Result<ChatCompletion, AnyLLMError> {
-        let messages = Self::convert_messages(&request.messages);
+        let messages = Self::convert_messages(&request.messages)?;
 
         let mut chat_request = ChatMessageRequest::new(request.model.clone(), messages);
 
@@ -353,7 +371,7 @@ impl Provider for OllamaProvider {
         request: CompletionRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatCompletionChunk, AnyLLMError>> + Send>>, AnyLLMError>
     {
-        let messages = Self::convert_messages(&request.messages);
+        let messages = Self::convert_messages(&request.messages)?;
 
         let mut chat_request = ChatMessageRequest::new(request.model.clone(), messages);
 
@@ -470,6 +488,72 @@ impl Provider for OllamaProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_assistant_tool_calls_survive_serialization() {
+        for content in [None, Some("Checking both tools.".to_string())] {
+            let messages = vec![
+                Message::system("Use tools."),
+                Message::user("Check the weather and clock."),
+                Message::assistant_with_tool_calls(content.clone(), vec![
+                    ToolCall {
+                        id: "call_weather".into(),
+                        call_type: "function".into(),
+                        function: ToolCallFunction {
+                            name: "weather".into(),
+                            arguments: r#"{"city":"Queens","options":{"units":"celsius"},"days":[1,2]}"#.into(),
+                        },
+                    },
+                    ToolCall {
+                        id: "call_clock".into(),
+                        call_type: "function".into(),
+                        function: ToolCallFunction { name: "clock".into(), arguments: "{}".into() },
+                    },
+                ]),
+                Message::tool("call_weather", "Sunny"),
+                Message::tool("call_clock", "Noon"),
+                Message::assistant("Sunny at noon."),
+            ];
+            let converted = OllamaProvider::convert_messages(&messages).unwrap();
+            let request = ChatMessageRequest::new("llama3.2".into(), converted);
+            let wire = serde_json::to_value(request).unwrap();
+            assert_eq!(wire["messages"][2]["content"], content.unwrap_or_default());
+            assert_eq!(wire["messages"][2]["tool_calls"], serde_json::json!([
+                {"function": {"name": "weather", "arguments": {
+                    "city": "Queens", "options": {"units": "celsius"}, "days": [1, 2]
+                }}},
+                {"function": {"name": "clock", "arguments": {}}}
+            ]));
+            assert_eq!(wire["messages"][3]["role"], "tool");
+            assert_eq!(wire["messages"][3]["content"], "Sunny");
+            assert_eq!(wire["messages"][4]["content"], "Noon");
+            assert_eq!(wire["messages"][0]["role"], "system");
+            assert_eq!(wire["messages"][1]["role"], "user");
+            assert_eq!(wire["messages"][5]["tool_calls"], serde_json::json!([]));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_invalid_tool_arguments_fail_chat_and_stream_before_network() {
+        let provider = OllamaProvider::new(ProviderConfig {
+            base_url: Some("http://127.0.0.1:1".into()),
+            ..Default::default()
+        }).unwrap();
+        for arguments in ["{broken", "", "null", "[]", "42", "\"text\""] {
+            let request = CompletionRequest {
+                model: "llama3.2".into(),
+                messages: vec![Message::assistant_with_tool_calls(None, vec![ToolCall {
+                    id: "call_1".into(), call_type: "function".into(),
+                    function: ToolCallFunction { name: "clock".into(), arguments: arguments.into() },
+                }])],
+                ..Default::default()
+            };
+            assert!(matches!(provider.completion(request.clone()).await,
+                Err(AnyLLMError::InvalidRequest { .. })));
+            assert!(matches!(provider.completion_stream(request).await,
+                Err(AnyLLMError::InvalidRequest { .. })));
+        }
+    }
 
     #[test]
     fn test_provider_metadata() {
