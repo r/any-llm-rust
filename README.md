@@ -241,3 +241,11 @@ cargo build --release
 ## License
 
 MIT
+
+### Ollama tool-call history
+
+Ollama chat and streaming requests preserve assistant tool calls, including
+function names and JSON argument objects, followed by tool response messages.
+Tool-only assistant messages may have null content (sent as empty text).
+Arguments must be JSON-encoded objects; malformed or non-object arguments return
+an invalid-request error before contacting Ollama.
